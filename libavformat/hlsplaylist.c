@@ -108,8 +108,9 @@ void ff_hls_write_stream_info(AVStream *st, AVIOContext *out, int bandwidth,
 }
 
 void ff_hls_write_playlist_header(AVIOContext *out, int version, int allowcache,
-                                  int target_duration, int64_t sequence,
-                                  uint32_t playlist_type, int iframe_mode)
+                                  int target_duration, float part_duration, 
+                                  int64_t sequence, uint32_t playlist_type, 
+                                  int iframe_mode)
 {
     if (!out)
         return;
@@ -118,6 +119,8 @@ void ff_hls_write_playlist_header(AVIOContext *out, int version, int allowcache,
         avio_printf(out, "#EXT-X-ALLOW-CACHE:%s\n", allowcache == 0 ? "NO" : "YES");
     }
     avio_printf(out, "#EXT-X-TARGETDURATION:%d\n", target_duration);
+    if (part_duration)
+        avio_printf(out, "#EXT-X-PART-INF:PART-TARGET=%f\n", part_duration);
     avio_printf(out, "#EXT-X-MEDIA-SEQUENCE:%"PRId64"\n", sequence);
     av_log(NULL, AV_LOG_VERBOSE, "EXT-X-MEDIA-SEQUENCE:%"PRId64"\n", sequence);
 

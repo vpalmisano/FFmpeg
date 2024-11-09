@@ -84,6 +84,9 @@ typedef struct Segment {
     double prog_date_time;
     int64_t duration;
     int n;
+    char lhls_part_file[1024];
+    int lhls_part_frames[25];
+    int lhls_part_current_frame;
 } Segment;
 
 typedef struct AdaptationSet {
@@ -118,7 +121,7 @@ typedef struct OutputStream {
     int64_t frag_duration;
     int64_t last_duration;
     Segment **segments;
-    int64_t first_pts, start_pts, max_pts;
+    int64_t first_pts, start_pts, max_pts, part_pts;
     int64_t last_dts, last_pts;
     int last_flags;
     int bit_rate;
@@ -540,7 +543,7 @@ static void write_hls_media_playlist(OutputStream *os, AVFormatContext *s,
             target_duration = lrint(duration);
     }
 
-    ff_hls_write_playlist_header(c->m3u8_out, 6, -1, target_duration,
+    ff_hls_write_playlist_header(c->m3u8_out, 6, -1, target_duration, 1.0,
                                  start_number, PLAYLIST_TYPE_NONE, 0);
 
     ff_hls_write_init_file(c->m3u8_out, os->initfile, c->single_file,
@@ -565,10 +568,20 @@ static void write_hls_media_playlist(OutputStream *os, AVFormatContext *s,
         if (ret < 0) {
             av_log(os->ctx, AV_LOG_WARNING, "ff_hls_write_file_entry get error\n");
         }
+
+        if (i >= os->nb_segments - 3 && !final) {
+            int start_range = 0;
+            for (int j = 0; j < seg->lhls_part_current_frame; j++) {
+                avio_printf(c->m3u8_out, "#EXT-X-PART:DURATION=%f,URI=\"%s\",BYTERANGE=\"%d@%d\"\n", 1.0,
+                    seg->lhls_part_file, seg->lhls_part_frames[j], start_range);
+                start_range += seg->lhls_part_frames[j];
+            }
+        }
     }
 
-    if (prefetch_url)
+    /* if (prefetch_url) {
         avio_printf(c->m3u8_out, "#EXT-X-PREFETCH:%s\n", prefetch_url);
+    } */
 
     if (final)
         ff_hls_write_end_list(c->m3u8_out);
@@ -1706,6 +1719,7 @@ static int dash_init(AVFormatContext *s)
         set_codec_str(s, st->codecpar, &st->avg_frame_rate, os->codec_str,
                       sizeof(os->codec_str));
         os->first_pts = AV_NOPTS_VALUE;
+        os->part_pts = AV_NOPTS_VALUE;
         os->max_pts = AV_NOPTS_VALUE;
         os->last_dts = AV_NOPTS_VALUE;
         os->segment_index = 1;
@@ -2103,7 +2117,7 @@ static int dash_write_packet(AVFormatContext *s, AVPacket *pkt)
     }
 
     if (os->first_pts == AV_NOPTS_VALUE) {
-        os->first_pts = pkt->pts;
+        os->first_pts = os->part_pts = pkt->pts;
     }
     os->last_pts = pkt->pts;
 
@@ -2196,6 +2210,7 @@ static int dash_write_packet(AVFormatContext *s, AVPacket *pkt)
             os->start_pts = os->max_pts;
         else
             os->start_pts = pkt->pts;
+        os->part_pts = os->start_pts;
     }
     if (os->max_pts == AV_NOPTS_VALUE)
         os->max_pts = pkt->pts + pkt->duration;
@@ -2269,21 +2284,43 @@ static int dash_write_packet(AVFormatContext *s, AVPacket *pkt)
             write_manifest(s, 0);
         }
 
-        if (c->lhls) {
-            char *prefetch_url = use_rename ? NULL : os->filename;
-            write_hls_media_playlist(os, s, pkt->stream_index, 0, prefetch_url);
+        if (c->lhls && os->nb_segments > 1) {
+            Segment *seg = os->segments[os->nb_segments - 2];
+            seg->lhls_part_current_frame++;
+            /* char *prefetch_url = use_rename ? NULL : os->filename; */
+            write_hls_media_playlist(os, s, pkt->stream_index, 0, NULL);
         }
     }
 
     //write out the data immediately in streaming mode
     if (c->streaming && os->segment_type == SEGMENT_TYPE_MP4) {
         int len = 0;
+        int size = 0;
         uint8_t *buf = NULL;
         avio_flush(os->ctx->pb);
         len = avio_get_dyn_buf (os->ctx->pb, &buf);
+        size = len - os->written_len;
         if (os->out) {
-            avio_write(os->out, buf + os->written_len, len - os->written_len);
+            avio_write(os->out, buf + os->written_len, size);
             avio_flush(os->out);
+        }
+        if (c->lhls && os->nb_segments > 0) {
+            Segment *seg = os->segments[os->nb_segments - 1];
+            if(av_compare_ts(pkt->pts - os->part_pts, st->time_base, os->seg_duration / 4, AV_TIME_BASE_Q) >= 0) {
+                if (!seg->lhls_part_current_frame) {
+                    av_strlcpy(seg->lhls_part_file, os->filename, sizeof(seg->file));
+                }
+                av_log(s, AV_LOG_WARNING, "%s lhls_part_current_frame: %d size: %d\n", 
+                    seg->lhls_part_file, seg->lhls_part_current_frame, seg->lhls_part_frames[seg->lhls_part_current_frame]);
+
+                os->part_pts = pkt->pts;
+                seg->lhls_part_current_frame++;
+                seg->lhls_part_frames[seg->lhls_part_current_frame] = 0;
+
+                write_hls_media_playlist(os, s, pkt->stream_index, 0, NULL);
+            } else {
+                seg->lhls_part_frames[seg->lhls_part_current_frame] += size;
+            }
         }
         os->written_len = len;
     }
