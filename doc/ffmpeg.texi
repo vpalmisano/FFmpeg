@@ -1373,6 +1373,12 @@ The properties where a change triggers reinitialization are,
 for video, frame resolution or pixel format;
 for audio, sample format, sample rate, channel count or channel layout.
 
+@item -drop_changed[:@var{stream_specifier}] @var{integer} (@emph{input,per-stream})
+This boolean option determines whether a frame with differing frame parameters mid-stream
+gets dropped instead of leading to filtergraph reinitialization, as that would lead to loss
+of filter state. Generally useful to avoid corrupted yet decodable packets in live streaming
+inputs. Default is false.
+
 @item -filter_threads @var{nb_threads} (@emph{global})
 Defines how many threads are used to process a filter pipeline. Each pipeline
 will produce a thread pool with this many threads available for parallel processing.
@@ -1387,6 +1393,16 @@ It is on by default, to explicitly disable it you need to specify @code{-nostats
 
 @item -stats_period @var{time} (@emph{global})
 Set period at which encoding progress/statistics are updated. Default is 0.5 seconds.
+
+@item -print_graphs (@emph{global})
+Prints execution graph details to stderr in the format set via -print_graphs_format.
+
+@item -print_graphs_file @var{filename} (@emph{global})
+Writes execution graph details to the specified file in the format set via -print_graphs_format.
+
+@item -print_graphs_format @var{format} (@emph{global})
+Sets the output format (available formats are: default, compact, csv, flat, ini, json, xml, mermaid, mermaidhtml)
+The default format is json.
 
 @item -progress @var{url} (@emph{global})
 Send program-friendly progress information to @var{url}.
@@ -1985,6 +2001,9 @@ transcoding, without copying the frames into the system memory.
 
 For it to work, both the decoder and the encoder must support QSV acceleration
 and no filters must be used.
+
+@item videotoolbox
+Use Video Toolbox hardware acceleration.
 @end table
 
 This option has no effect if the selected hwaccel is not available or not
@@ -2325,6 +2344,11 @@ Read input at native frame rate. This is equivalent to setting @code{-readrate 1
 @item -readrate_initial_burst @var{seconds}
 Set an initial read burst time, in seconds, after which @option{-re/-readrate}
 will be enforced.
+@item -readrate_catchup @var{speed} (@emph{input})
+If either the input or output is blocked leading to actual read speed falling behind the
+specified readrate, then this rate takes effect till the input catches up with the
+specified readrate. Must not be lower than the primary readrate.
+
 @item -vsync @var{parameter} (@emph{global})
 @itemx -fps_mode[:@var{stream_specifier}] @var{parameter} (@emph{output,per-stream})
 Set video sync method / framerate mode. vsync is applied to all output video streams

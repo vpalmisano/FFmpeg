@@ -342,7 +342,7 @@ int ff_rv34_get_start_offset(GetBitContext *gb, int mb_size)
     for(i = 0; i < 5; i++)
         if(rv34_mb_max_sizes[i] >= mb_size - 1)
             break;
-    return rv34_mb_bits_sizes[i];
+    return get_bits(gb, rv34_mb_bits_sizes[i]);
 }
 
 /**
@@ -1463,7 +1463,9 @@ static int rv34_decode_slice(RV34DecContext *r, int end, const uint8_t* buf, int
 
     ff_init_block_index(s);
     while(!check_slice_end(r, s)) {
-        ff_update_block_index(s, 8, 0, 1);
+        s->dest[0] += 16;
+        s->dest[1] += 8;
+        s->dest[2] += 8;
 
         if(r->si.type)
             res = rv34_decode_inter_macroblock(r, r->intra_types + s->mb_x * 4 + 4);
@@ -1536,19 +1538,21 @@ av_cold int ff_rv34_decode_init(AVCodecContext *avctx)
 int ff_rv34_decode_update_thread_context(AVCodecContext *dst, const AVCodecContext *src)
 {
     RV34DecContext *r = dst->priv_data, *r1 = src->priv_data;
-    MpegEncContext * const s = &r->s, * const s1 = &r1->s;
-    int err;
+    MpegEncContext *const s1 = &r1->s;
+    int ret;
 
     if (dst == src || !s1->context_initialized)
         return 0;
 
-    if (s->height != s1->height || s->width != s1->width || s->context_reinit) {
-        s->height = s1->height;
-        s->width  = s1->width;
-        if ((err = ff_mpv_common_frame_size_change(s)) < 0)
-            return err;
-        if ((err = rv34_decoder_realloc(r)) < 0)
-            return err;
+    ret = ff_mpeg_update_thread_context(dst, src);
+    if (ret < 0)
+        return ret;
+
+    // Did ff_mpeg_update_thread_context reinit?
+    if (ret > 0) {
+        ret = rv34_decoder_realloc(r);
+        if (ret < 0)
+            return ret;
     }
 
     r->cur_pts  = r1->cur_pts;
@@ -1557,12 +1561,7 @@ int ff_rv34_decode_update_thread_context(AVCodecContext *dst, const AVCodecConte
 
     memset(&r->si, 0, sizeof(r->si));
 
-    // Do no call ff_mpeg_update_thread_context on a partially initialized
-    // decoder context.
-    if (!s1->context_initialized)
-        return 0;
-
-    return ff_mpeg_update_thread_context(dst, src);
+    return 0;
 }
 
 static int get_slice_offset(AVCodecContext *avctx, const uint8_t *buf, int n, int slice_count, int buf_size)

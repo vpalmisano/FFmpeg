@@ -174,11 +174,8 @@ static int pred_weight_table(SliceHeader *sh, void *logctx,
 {
     int i = 0;
     int j = 0;
-    uint8_t luma_weight_l0_flag[16];
-    uint8_t chroma_weight_l0_flag[16];
-    uint8_t luma_weight_l1_flag[16];
-    uint8_t chroma_weight_l1_flag[16];
     int luma_log2_weight_denom;
+    unsigned luma_weight_flags, chroma_weight_flags;
 
     luma_log2_weight_denom = get_ue_golomb_long(gb);
     if (luma_log2_weight_denom < 0 || luma_log2_weight_denom > 7) {
@@ -195,29 +192,22 @@ static int pred_weight_table(SliceHeader *sh, void *logctx,
         sh->chroma_log2_weight_denom = chroma_log2_weight_denom;
     }
 
+    luma_weight_flags   = get_bits(gb, sh->nb_refs[L0]);
+    chroma_weight_flags = sps->chroma_format_idc != 0 ? get_bits(gb, sh->nb_refs[L0]) : 0;
     for (i = 0; i < sh->nb_refs[L0]; i++) {
-        luma_weight_l0_flag[i] = get_bits1(gb);
-        if (!luma_weight_l0_flag[i]) {
-            sh->luma_weight_l0[i] = 1 << sh->luma_log2_weight_denom;
-            sh->luma_offset_l0[i] = 0;
-        }
-    }
-    if (sps->chroma_format_idc != 0) {
-        for (i = 0; i < sh->nb_refs[L0]; i++)
-            chroma_weight_l0_flag[i] = get_bits1(gb);
-    } else {
-        for (i = 0; i < sh->nb_refs[L0]; i++)
-            chroma_weight_l0_flag[i] = 0;
-    }
-    for (i = 0; i < sh->nb_refs[L0]; i++) {
-        if (luma_weight_l0_flag[i]) {
+        unsigned flag_bit = 1 << (sh->nb_refs[L0] - 1 - i);
+
+        if (luma_weight_flags & flag_bit) {
             int delta_luma_weight_l0 = get_se_golomb(gb);
             if ((int8_t)delta_luma_weight_l0 != delta_luma_weight_l0)
                 return AVERROR_INVALIDDATA;
             sh->luma_weight_l0[i] = (1 << sh->luma_log2_weight_denom) + delta_luma_weight_l0;
             sh->luma_offset_l0[i] = get_se_golomb(gb);
+        } else {
+            sh->luma_weight_l0[i] = 1 << sh->luma_log2_weight_denom;
+            sh->luma_offset_l0[i] = 0;
         }
-        if (chroma_weight_l0_flag[i]) {
+        if (chroma_weight_flags & flag_bit) {
             for (j = 0; j < 2; j++) {
                 int delta_chroma_weight_l0 = get_se_golomb(gb);
                 int delta_chroma_offset_l0 = get_se_golomb(gb);
@@ -239,29 +229,22 @@ static int pred_weight_table(SliceHeader *sh, void *logctx,
         }
     }
     if (sh->slice_type == HEVC_SLICE_B) {
+        luma_weight_flags   = get_bits(gb, sh->nb_refs[L1]);
+        chroma_weight_flags = sps->chroma_format_idc != 0 ? get_bits(gb, sh->nb_refs[L1]) : 0;
         for (i = 0; i < sh->nb_refs[L1]; i++) {
-            luma_weight_l1_flag[i] = get_bits1(gb);
-            if (!luma_weight_l1_flag[i]) {
-                sh->luma_weight_l1[i] = 1 << sh->luma_log2_weight_denom;
-                sh->luma_offset_l1[i] = 0;
-            }
-        }
-        if (sps->chroma_format_idc != 0) {
-            for (i = 0; i < sh->nb_refs[L1]; i++)
-                chroma_weight_l1_flag[i] = get_bits1(gb);
-        } else {
-            for (i = 0; i < sh->nb_refs[L1]; i++)
-                chroma_weight_l1_flag[i] = 0;
-        }
-        for (i = 0; i < sh->nb_refs[L1]; i++) {
-            if (luma_weight_l1_flag[i]) {
+            unsigned flag_bit = 1 << (sh->nb_refs[L1] - 1 - i);
+
+            if (luma_weight_flags & flag_bit) {
                 int delta_luma_weight_l1 = get_se_golomb(gb);
                 if ((int8_t)delta_luma_weight_l1 != delta_luma_weight_l1)
                     return AVERROR_INVALIDDATA;
                 sh->luma_weight_l1[i] = (1 << sh->luma_log2_weight_denom) + delta_luma_weight_l1;
                 sh->luma_offset_l1[i] = get_se_golomb(gb);
+            } else {
+                sh->luma_weight_l1[i] = 1 << sh->luma_log2_weight_denom;
+                sh->luma_offset_l1[i] = 0;
             }
-            if (chroma_weight_l1_flag[i]) {
+            if (chroma_weight_flags & flag_bit) {
                 for (j = 0; j < 2; j++) {
                     int delta_chroma_weight_l1 = get_se_golomb(gb);
                     int delta_chroma_offset_l1 = get_se_golomb(gb);
@@ -466,12 +449,43 @@ static int export_multilayer(HEVCContext *s, const HEVCVPS *vps)
     return 0;
 }
 
+int ff_hevc_is_alpha_video(const HEVCContext *s)
+{
+    const HEVCVPS *vps = s->vps;
+    int ret = 0;
+
+    if (vps->nb_layers != 2 || !vps->layer_id_in_nuh[1])
+        return 0;
+
+    /* decode_vps_ext() guarantees that SCALABILITY_AUXILIARY with AuxId other
+     * than alpha cannot reach here.
+     */
+    ret = (s->vps->scalability_mask_flag & HEVC_SCALABILITY_AUXILIARY);
+
+    av_log(s->avctx, AV_LOG_DEBUG, "Multi layer video, %s alpha video\n",
+           ret ? "is" : "not");
+
+    return ret;
+}
+
 static int setup_multilayer(HEVCContext *s, const HEVCVPS *vps)
 {
     unsigned layers_active_output = 0, highest_layer;
 
     s->layers_active_output = 1;
     s->layers_active_decode = 1;
+
+    if (ff_hevc_is_alpha_video(s)) {
+        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(s->avctx->pix_fmt);
+
+        if (!(desc->flags & AV_PIX_FMT_FLAG_ALPHA))
+            return 0;
+
+        s->layers_active_decode = (1 << vps->nb_layers) - 1;
+        s->layers_active_output = 1;
+
+        return 0;
+    }
 
     // nothing requested - decode base layer only
     if (!s->nb_view_ids)
@@ -530,6 +544,34 @@ static int setup_multilayer(HEVCContext *s, const HEVCVPS *vps)
     return 0;
 }
 
+static enum AVPixelFormat map_to_alpha_format(HEVCContext *s,
+                                              enum AVPixelFormat pix_fmt)
+{
+    switch (pix_fmt) {
+    case AV_PIX_FMT_YUV420P:
+    case AV_PIX_FMT_YUVJ420P:
+        return AV_PIX_FMT_YUVA420P;
+    case AV_PIX_FMT_YUV420P10:
+        return AV_PIX_FMT_YUVA420P10;
+    case AV_PIX_FMT_YUV444P:
+        return AV_PIX_FMT_YUVA444P;
+    case AV_PIX_FMT_YUV422P:
+        return AV_PIX_FMT_YUVA422P;
+    case AV_PIX_FMT_YUV422P10LE:
+        return AV_PIX_FMT_YUVA422P10LE;
+    case AV_PIX_FMT_YUV444P10:
+        return AV_PIX_FMT_YUVA444P10;
+    case AV_PIX_FMT_YUV444P12:
+        return AV_PIX_FMT_YUVA444P12;
+    case AV_PIX_FMT_YUV422P12:
+        return AV_PIX_FMT_YUVA422P12;
+    default:
+        av_log(s->avctx, AV_LOG_WARNING, "No alpha pixel format map for %s\n",
+               av_get_pix_fmt_name(pix_fmt));
+        return AV_PIX_FMT_NONE;
+    }
+}
+
 static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
 {
 #define HWACCEL_MAX (CONFIG_HEVC_DXVA2_HWACCEL + \
@@ -540,8 +582,12 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
                      CONFIG_HEVC_VIDEOTOOLBOX_HWACCEL + \
                      CONFIG_HEVC_VDPAU_HWACCEL + \
                      CONFIG_HEVC_VULKAN_HWACCEL)
-    enum AVPixelFormat pix_fmts[HWACCEL_MAX + 2], *fmt = pix_fmts;
+    enum AVPixelFormat pix_fmts[HWACCEL_MAX + 3], *fmt = pix_fmts;
+    enum AVPixelFormat alpha_fmt = AV_PIX_FMT_NONE;
     int ret;
+
+    if (ff_hevc_is_alpha_video(s))
+        alpha_fmt = map_to_alpha_format(s, sps->pix_fmt);
 
     switch (sps->pix_fmt) {
     case AV_PIX_FMT_YUV420P:
@@ -664,6 +710,8 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
         break;
     }
 
+    if (alpha_fmt != AV_PIX_FMT_NONE)
+        *fmt++ = alpha_fmt;
     *fmt++ = sps->pix_fmt;
     *fmt = AV_PIX_FMT_NONE;
 
@@ -1106,11 +1154,17 @@ static int hls_slice_header(SliceHeader *sh, const HEVCContext *s, GetBitContext
     }
 
     ret = get_bits1(gb);
-    if (!ret) {
+    if (!ret && get_bits_left(gb) >= 0) {
         av_log(s->avctx, AV_LOG_ERROR, "alignment_bit_equal_to_one=0\n");
         return AVERROR_INVALIDDATA;
     }
     sh->data_offset = align_get_bits(gb) - gb->buffer;
+
+    if (get_bits_left(gb) < 0) {
+        av_log(s->avctx, AV_LOG_ERROR,
+               "Overread slice header by %d bits\n", -get_bits_left(gb));
+        return AVERROR_INVALIDDATA;
+    }
 
     // Inferred parameters
     sh->slice_qp = 26U + pps->pic_init_qp_minus26 + sh->slice_qp_delta;
@@ -1129,12 +1183,6 @@ static int hls_slice_header(SliceHeader *sh, const HEVCContext *s, GetBitContext
     if (sh->dependent_slice_segment_flag &&
         (!sh->slice_ctb_addr_rs || !pps->ctb_addr_rs_to_ts[sh->slice_ctb_addr_rs])) {
         av_log(s->avctx, AV_LOG_ERROR, "Impossible slice segment.\n");
-        return AVERROR_INVALIDDATA;
-    }
-
-    if (get_bits_left(gb) < 0) {
-        av_log(s->avctx, AV_LOG_ERROR,
-               "Overread slice header by %d bits\n", -get_bits_left(gb));
         return AVERROR_INVALIDDATA;
     }
 
@@ -2060,7 +2108,7 @@ static void hls_prediction_unit(HEVCLocalContext *lc,
     const RefPicList *refPicList = s->cur_frame->refPicList;
     const HEVCFrame *ref0 = NULL, *ref1 = NULL;
     const int *linesize = s->cur_frame->f->linesize;
-    uint8_t *dst0 = POS(0, x0, y0);
+    uint8_t *dst0 = s->cur_frame->f->data[0] + y0 * linesize[0] + (x0 << sps->pixel_shift);
     uint8_t *dst1 = POS(1, x0, y0);
     uint8_t *dst2 = POS(2, x0, y0);
     int log2_min_cb_size = sps->log2_min_cb_size;
@@ -3194,6 +3242,12 @@ static int hevc_frame_start(HEVCContext *s, HEVCLayerContext *l,
                 !sps->vui.common.video_signal_type_present_flag)
                 pix_fmt = sps_base->pix_fmt;
 
+            // Ignore range mismatch between base layer and alpha layer
+            if (ff_hevc_is_alpha_video(s) &&
+                sps_base->pix_fmt == AV_PIX_FMT_YUV420P &&
+                pix_fmt == AV_PIX_FMT_YUVJ420P)
+                pix_fmt = sps_base->pix_fmt;
+
             if (pix_fmt     != sps_base->pix_fmt ||
                 sps->width  != sps_base->width   ||
                 sps->height != sps_base->height) {
@@ -3235,9 +3289,19 @@ static int hevc_frame_start(HEVCContext *s, HEVCLayerContext *l,
     s->first_nal_type    = s->nal_unit_type;
     s->poc               = s->sh.poc;
 
-    if (IS_IRAP(s))
+    if (IS_IRAP(s)) {
         s->no_rasl_output_flag = IS_IDR(s) || IS_BLA(s) ||
                                  (s->nal_unit_type == HEVC_NAL_CRA_NUT && s->last_eos);
+        s->recovery_poc = HEVC_RECOVERY_END;
+    }
+
+    if (s->recovery_poc != HEVC_RECOVERY_END &&
+        s->sei.recovery_point.has_recovery_poc) {
+        if (s->recovery_poc == HEVC_RECOVERY_UNSPECIFIED)
+            s->recovery_poc = s->poc + s->sei.recovery_point.recovery_poc_cnt;
+        else if (s->poc >= s->recovery_poc)
+            s->recovery_poc = HEVC_RECOVERY_END;
+    }
 
     /* 8.3.1 */
     if (s->temporal_id == 0 &&
@@ -3320,7 +3384,10 @@ static int hevc_frame_start(HEVCContext *s, HEVCLayerContext *l,
         goto fail;
 
     if (s->avctx->hwaccel) {
-        ret = FF_HW_CALL(s->avctx, start_frame, NULL, 0);
+        AVCodecInternal *avci = s->avctx->internal;
+        AVPacket *avpkt = avci->in_pkt;
+        ret = FF_HW_CALL(s->avctx, start_frame,
+                         avpkt->buf, NULL, 0);
         if (ret < 0)
             goto fail;
     }
@@ -3613,6 +3680,12 @@ fail:
     return ret;
 }
 
+static void decode_reset_recovery_point(HEVCContext *s)
+{
+    s->recovery_poc = HEVC_RECOVERY_UNSPECIFIED;
+    s->sei.recovery_point.has_recovery_poc = 0;
+}
+
 static int decode_nal_units(HEVCContext *s, const uint8_t *buf, int length)
 {
     int i, ret = 0;
@@ -3623,6 +3696,8 @@ static int decode_nal_units(HEVCContext *s, const uint8_t *buf, int length)
     s->last_eos = s->eos;
     s->eos = 0;
     s->slice_initialized = 0;
+    if (s->last_eos)
+        decode_reset_recovery_point(s);
 
     for (int i = 0; i < FF_ARRAY_ELEMS(s->layers); i++) {
         HEVCLayerContext *l = &s->layers[i];
@@ -3644,6 +3719,7 @@ static int decode_nal_units(HEVCContext *s, const uint8_t *buf, int length)
             s->pkt.nals[i].type == HEVC_NAL_EOS_NUT) {
             if (eos_at_start) {
                 s->last_eos = 1;
+                decode_reset_recovery_point(s);
             } else {
                 s->eos = 1;
             }
@@ -4016,6 +4092,8 @@ static int hevc_update_thread_context(AVCodecContext *dst,
     s->sei.common.display_orientation  = s0->sei.common.display_orientation;
     s->sei.common.alternative_transfer = s0->sei.common.alternative_transfer;
     s->sei.tdrdi                       = s0->sei.tdrdi;
+    s->sei.recovery_point              = s0->sei.recovery_point;
+    s->recovery_poc                    = s0->recovery_poc;
 
     return 0;
 }

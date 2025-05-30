@@ -506,23 +506,18 @@ static int slices_realloc(VVCFrameContext *fc)
     return 0;
 }
 
-static int ep_init_cabac_decoder(SliceContext *sc, const int index,
-    const H2645NAL *nal, GetBitContext *gb, const CodedBitstreamUnit *unit)
+static int get_ep_size(const H266RawSliceHeader *rsh, GetBitContext *gb, const H2645NAL *nal, const int header_size, const int ep_index)
 {
-    const H266RawSlice *slice     = unit->content_ref;
-    const H266RawSliceHeader *rsh = sc->sh.r;
-    EntryPoint *ep                = sc->eps + index;
     int size;
-    int ret;
 
-    if (index < rsh->num_entry_points) {
+    if (ep_index < rsh->num_entry_points) {
         int skipped = 0;
         int64_t start =  (gb->index >> 3);
-        int64_t end = start + rsh->sh_entry_point_offset_minus1[index] + 1;
-        while (skipped < nal->skipped_bytes && nal->skipped_bytes_pos[skipped] <= start + slice->header_size) {
+        int64_t end = start + rsh->sh_entry_point_offset_minus1[ep_index] + 1;
+        while (skipped < nal->skipped_bytes && nal->skipped_bytes_pos[skipped] <= start + header_size) {
             skipped++;
         }
-        while (skipped < nal->skipped_bytes && nal->skipped_bytes_pos[skipped] <= end + slice->header_size) {
+        while (skipped < nal->skipped_bytes && nal->skipped_bytes_pos[skipped] <= end + header_size) {
             end--;
             skipped++;
         }
@@ -531,11 +526,34 @@ static int ep_init_cabac_decoder(SliceContext *sc, const int index,
     } else {
         size = get_bits_left(gb) / 8;
     }
+    return size;
+}
+
+static int ep_init_cabac_decoder(EntryPoint *ep, GetBitContext *gb, const int size)
+{
+    int ret;
+
     av_assert0(gb->buffer + get_bits_count(gb) / 8 + size <= gb->buffer_end);
     ret = ff_init_cabac_decoder (&ep->cc, gb->buffer + get_bits_count(gb) / 8, size);
     if (ret < 0)
         return ret;
     skip_bits(gb, size * 8);
+    return 0;
+}
+
+static int ep_init(EntryPoint *ep, const int ctu_addr, const int ctu_end, GetBitContext *gb, const int size)
+{
+    const int ret = ep_init_cabac_decoder(ep, gb, size);
+
+    if (ret < 0)
+        return ret;
+
+    ep->ctu_start = ctu_addr;
+    ep->ctu_end   = ctu_end;
+
+    for (int c_idx = LUMA; c_idx <= CR; c_idx++)
+        ep->pp[c_idx].size = 0;
+
     return 0;
 }
 
@@ -562,19 +580,18 @@ static int slice_init_entry_points(SliceContext *sc,
         return ret;
     for (int i = 0; i < sc->nb_eps; i++)
     {
-        EntryPoint *ep = sc->eps + i;
+        const int size    = get_ep_size(sc->sh.r, &gb, nal, slice->header_size, i);
+        const int ctu_end = (i + 1 == sc->nb_eps ? sh->num_ctus_in_curr_slice : sh->entry_point_start_ctu[i]);
+        EntryPoint *ep    = sc->eps + i;
 
-        ep->ctu_start = ctu_addr;
-        ep->ctu_end   = (i + 1 == sc->nb_eps ? sh->num_ctus_in_curr_slice : sh->entry_point_start_ctu[i]);
+        ret = ep_init(ep, ctu_addr, ctu_end, &gb, size);
+        if (ret < 0)
+            return ret;
 
         for (int j = ep->ctu_start; j < ep->ctu_end; j++) {
             const int rs = sc->sh.ctb_addr_in_curr_slice[j];
             fc->tab.slice_idx[rs] = sc->slice_idx;
         }
-
-        ret = ep_init_cabac_decoder(sc, i, nal, &gb, unit);
-        if (ret < 0)
-            return ret;
 
         if (i + 1 < sc->nb_eps)
             ctu_addr = sh->entry_point_start_ctu[i];
@@ -670,8 +687,6 @@ static av_cold int frame_context_init(VVCFrameContext *fc, AVCodecContext *avctx
 static int frame_context_setup(VVCFrameContext *fc, VVCContext *s)
 {
     int ret;
-
-    fc->ref = NULL;
 
     // copy refs from the last frame
     if (s->nb_frames && s->nb_fcs > 1) {
@@ -812,7 +827,6 @@ static int export_frame_params(VVCContext *s, const VVCFrameContext *fc)
 
     c->width  = pps->width  - ((pps->r->pps_conf_win_left_offset + pps->r->pps_conf_win_right_offset) << sps->hshift[CHROMA]);
     c->height = pps->height - ((pps->r->pps_conf_win_top_offset + pps->r->pps_conf_win_bottom_offset) << sps->vshift[CHROMA]);
-    c->has_b_frames = sps->r->sps_dpb_params.dpb_max_num_reorder_pics[sps->r->sps_max_sublayers_minus1];
 
     return 0;
 }
@@ -834,7 +848,8 @@ static int frame_setup(VVCFrameContext *fc, VVCContext *s)
     return 0;
 }
 
-static int decode_slice(VVCContext *s, VVCFrameContext *fc, const H2645NAL *nal, const CodedBitstreamUnit *unit)
+static int decode_slice(VVCContext *s, VVCFrameContext *fc, AVBufferRef *buf_ref,
+                        const H2645NAL *nal, const CodedBitstreamUnit *unit)
 {
     int ret;
     SliceContext *sc;
@@ -863,7 +878,7 @@ static int decode_slice(VVCContext *s, VVCFrameContext *fc, const H2645NAL *nal,
 
     if (s->avctx->hwaccel) {
         if (is_first_slice) {
-            ret = FF_HW_CALL(s->avctx, start_frame, NULL, 0);
+            ret = FF_HW_CALL(s->avctx, start_frame, buf_ref, NULL, 0);
             if (ret < 0)
                 return ret;
         }
@@ -879,7 +894,8 @@ static int decode_slice(VVCContext *s, VVCFrameContext *fc, const H2645NAL *nal,
     return 0;
 }
 
-static int decode_nal_unit(VVCContext *s, VVCFrameContext *fc, const H2645NAL *nal, const CodedBitstreamUnit *unit)
+static int decode_nal_unit(VVCContext *s, VVCFrameContext *fc, AVBufferRef *buf_ref,
+                           const H2645NAL *nal, const CodedBitstreamUnit *unit)
 {
     int  ret;
 
@@ -905,7 +921,7 @@ static int decode_nal_unit(VVCContext *s, VVCFrameContext *fc, const H2645NAL *n
     case VVC_IDR_N_LP:
     case VVC_CRA_NUT:
     case VVC_GDR_NUT:
-        ret = decode_slice(s, fc, nal, unit);
+        ret = decode_slice(s, fc, buf_ref, nal, unit);
         if (ret < 0)
             return ret;
         break;
@@ -927,6 +943,7 @@ static int decode_nal_units(VVCContext *s, VVCFrameContext *fc, AVPacket *avpkt)
     int ret = 0;
     s->last_eos = s->eos;
     s->eos = 0;
+    fc->ref = NULL;
 
     ff_cbs_fragment_reset(frame);
     ret = ff_cbs_read_packet(s->cbc, frame, avpkt);
@@ -942,7 +959,7 @@ static int decode_nal_units(VVCContext *s, VVCFrameContext *fc, AVPacket *avpkt)
         if (unit->type == VVC_EOB_NUT || unit->type == VVC_EOS_NUT) {
             s->last_eos = 1;
         } else {
-            ret = decode_nal_unit(s, fc, nal, unit);
+            ret = decode_nal_unit(s, fc, avpkt->buf, nal, unit);
             if (ret < 0) {
                 av_log(s->avctx, AV_LOG_WARNING,
                         "Error parsing NAL unit #%d.\n", i);

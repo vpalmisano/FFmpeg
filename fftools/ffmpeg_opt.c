@@ -47,6 +47,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/stereo3d.h"
+#include "graph/graphprint.h"
 
 HWDevice *filter_hw_device;
 
@@ -75,6 +76,9 @@ float max_error_rate  = 2.0/3;
 char *filter_nbthreads;
 int filter_complex_nbthreads = 0;
 int vstats_version = 2;
+int print_graphs = 0;
+char *print_graphs_file = NULL;
+char *print_graphs_format = NULL;
 int auto_conversion_filters = 1;
 int64_t stats_period = 500000;
 
@@ -1507,7 +1511,6 @@ static int opt_adrift_threshold(void *optctx, const char *opt, const char *arg)
 }
 #endif
 
-static const char *const alt_bsf[]            = { "absf", "vbsf", NULL };
 static const char *const alt_channel_layout[] = { "ch_layout", NULL};
 static const char *const alt_codec[]          = { "c", "acodec", "vcodec", "scodec", "dcodec", NULL };
 static const char *const alt_filter[]         = { "af", "vf", NULL };
@@ -1639,6 +1642,9 @@ const OptionDef options[] = {
     { "readrate_initial_burst", OPT_TYPE_DOUBLE, OPT_OFFSET | OPT_EXPERT | OPT_INPUT,
         { .off = OFFSET(readrate_initial_burst) },
         "The initial amount of input to burst read before imposing any readrate", "seconds" },
+    { "readrate_catchup",       OPT_TYPE_FLOAT, OPT_OFFSET | OPT_EXPERT | OPT_INPUT,
+        { .off = OFFSET(readrate_catchup) },
+        "Temporary readrate used to catch up if an input lags behind the specified readrate", "speed" },
     { "target",                 OPT_TYPE_FUNC, OPT_FUNC_ARG | OPT_PERFILE | OPT_EXPERT | OPT_OUTPUT,
         { .func_arg = opt_target },
         "specify target file type (\"vcd\", \"svcd\", \"dvd\", \"dv\" or \"dv50\" "
@@ -1716,6 +1722,9 @@ const OptionDef options[] = {
     { "reinit_filter",          OPT_TYPE_INT, OPT_PERSTREAM | OPT_INPUT | OPT_EXPERT,
         { .off = OFFSET(reinit_filters) },
         "reinit filtergraph on input parameter changes", "" },
+    { "drop_changed",          OPT_TYPE_INT, OPT_PERSTREAM | OPT_INPUT | OPT_EXPERT,
+        { .off = OFFSET(drop_changed) },
+        "drop frame instead of reiniting filtergraph on input parameter changes", "" },
     { "filter_complex",         OPT_TYPE_FUNC, OPT_FUNC_ARG | OPT_EXPERT,
         { .func_arg = opt_filter_complex },
         "create a complex filtergraph", "graph_description" },
@@ -1730,6 +1739,15 @@ const OptionDef options[] = {
         { .func_arg = opt_filter_complex_script },
         "deprecated, use -/filter_complex instead", "filename" },
 #endif
+    { "print_graphs",   OPT_TYPE_BOOL, 0,
+        { &print_graphs },
+        "print execution graph data to stderr" },
+    { "print_graphs_file", OPT_TYPE_STRING, 0,
+        { &print_graphs_file },
+        "write execution graph data to the specified file", "filename" },
+    { "print_graphs_format", OPT_TYPE_STRING, 0,
+        { &print_graphs_format },
+      "set the output printing format (available formats are: default, compact, csv, flat, ini, json, xml, mermaid, mermaidhtml)", "format" },
     { "auto_conversion_filters", OPT_TYPE_BOOL, OPT_EXPERT,
         { &auto_conversion_filters },
         "enable automatic conversion filters globally" },

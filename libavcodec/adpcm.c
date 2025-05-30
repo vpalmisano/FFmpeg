@@ -2319,7 +2319,7 @@ static int adpcm_decode_frame(AVCodecContext *avctx, AVFrame *frame,
         }
         ) /* End of CASE */
     default:
-        av_assert0(0); // unsupported codec_id should not happen
+        av_unreachable("There are cases for all codec ids using adpcm_decode_frame");
     }
 
     if (avpkt->size && bytestream2_tell(&gb) == 0) {
@@ -2395,7 +2395,7 @@ const FFCodec ff_ ## name_ ## _decoder = {                  \
     .p.type         = AVMEDIA_TYPE_AUDIO,                   \
     .p.id           = id_,                                  \
     .p.capabilities = AV_CODEC_CAP_DR1,                     \
-    .p.sample_fmts  = sample_fmts_,                         \
+    CODEC_SAMPLEFMTS_ARRAY(sample_fmts_),                   \
     .priv_data_size = sizeof(ADPCMDecodeContext),           \
     .init           = adpcm_decode_init,                    \
     FF_CODEC_DECODE_CB(adpcm_decode_frame),                 \

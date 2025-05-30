@@ -139,6 +139,7 @@ OBJS = adler32.o                                                        \
        file.o                                                           \
        file_open.o                                                      \
        float_dsp.o                                                      \
+       float_scalarproduct.o                                            \
        film_grain_params.o                                              \
        fixed_dsp.o                                                      \
        frame.o                                                          \
@@ -172,6 +173,7 @@ OBJS = adler32.o                                                        \
        rc4.o                                                            \
        ripemd.o                                                         \
        samplefmt.o                                                      \
+       side_data.o                                                      \
        sha.o                                                            \
        sha512.o                                                         \
        slicethread.o                                                    \
@@ -180,6 +182,7 @@ OBJS = adler32.o                                                        \
        threadmessage.o                                                  \
        time.o                                                           \
        timecode.o                                                       \
+       timecode_internal.o                                              \
        timestamp.o                                                      \
        tree.o                                                           \
        twofish.o                                                        \
@@ -215,6 +218,13 @@ OBJS-$(CONFIG_VULKAN)                   += hwcontext_vulkan.o vulkan.o
 OBJS-$(!CONFIG_VULKAN)                  += hwcontext_stub.o
 
 OBJS += $(COMPAT_OBJS:%=../compat/%)
+
+# Object files to satisfy dependencies of other libraries for static builds
+STLIBOBJS-$(CONFIG_EXR_DECODER)         += half2float.o float2half.o
+STLIBOBJS-$(CONFIG_EXR_ENCODER)         += float2half.o
+STLIBOBJS-$(CONFIG_PHM_DECODER)         += half2float.o
+STLIBOBJS-$(CONFIG_PHM_ENCODER)         += float2half.o
+STLIBOBJS-$(CONFIG_SWSCALE)             += half2float.o
 
 # Windows resource file
 SHLIBOBJS-$(HAVE_GNU_WINDRES)           += avutilres.o

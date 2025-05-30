@@ -71,6 +71,8 @@ typedef struct AMFEncoderContext {
     int                 quality;
     int                 b_frame_delta_qp;
     int                 ref_b_frame_delta_qp;
+    int                 bit_depth;
+    int                 smart_access_video;
 
     // Dynamic options, can be set after Init() call
 
@@ -104,6 +106,8 @@ typedef struct AMFEncoderContext {
     int                 max_qp_i;
     int                 min_qp_p;
     int                 max_qp_p;
+    int                 min_qp_b;
+    int                 max_qp_b;
     int                 tier;
 
     // AV1 - specific options

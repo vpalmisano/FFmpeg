@@ -61,6 +61,7 @@ typedef void ID3D11Device;
 #define NVENC_HAVE_MULTIPLE_REF_FRAMES
 #define NVENC_HAVE_CUSTREAM_PTR
 #define NVENC_HAVE_GETLASTERRORSTRING
+#define NVENC_HAVE_FILLER_DATA
 #endif
 
 // SDK 10.0 compile time feature checks
@@ -96,6 +97,7 @@ typedef void ID3D11Device;
 #define NVENC_HAVE_LOOKAHEAD_LEVEL
 #define NVENC_HAVE_UHQ_TUNING
 #define NVENC_HAVE_UNIDIR_B
+#define NVENC_HAVE_TIME_CODE // added in 12.0, but incomplete until 12.2
 #endif
 
 // SDK 13.0 compile time feature checks
@@ -308,6 +310,7 @@ typedef struct NvencContext
     int unidir_b;
     int split_encode_mode;
     int mdm, cll;
+    int cbr_padding;
 } NvencContext;
 
 int ff_nvenc_encode_init(AVCodecContext *avctx);

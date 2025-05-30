@@ -11,6 +11,14 @@ version <next>:
 - Enhanced FLV v2: Multitrack audio/video, modern codec support
 - Animated JPEG XL encoding (via libjxl)
 - VVC in Matroska
+- CENC AV1 support in MP4 muxer
+- pngenc: set default prediction method to PAETH
+- APV decoder and APV raw bitstream muxing and demuxing
+- APV parser
+- APV encoding support through a libopenapv wrapper
+- VVC decoder supports all content of SCC (Screen Content Coding):
+  IBC (Inter Block Copy), Palette Mode and ACT (Adaptive Color Transform
+
 
 version 7.1:
 - Raw Captions with Time (RCWT) closed caption demuxer

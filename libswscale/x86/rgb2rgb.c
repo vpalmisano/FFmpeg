@@ -60,12 +60,12 @@ DECLARE_ASM_CONST(8, uint64_t, mask15r)      = 0x7C007C007C007C00ULL;
 #define mask16b mask15b
 DECLARE_ASM_CONST(8, uint64_t, mask16g)      = 0x07E007E007E007E0ULL;
 DECLARE_ASM_CONST(8, uint64_t, mask16r)      = 0xF800F800F800F800ULL;
-DECLARE_ASM_CONST(8, uint64_t, red_16mask)   = 0x0000f8000000f800ULL;
+#define red_16mask mask3215g
 DECLARE_ASM_CONST(8, uint64_t, green_16mask) = 0x000007e0000007e0ULL;
 DECLARE_ASM_CONST(8, uint64_t, blue_16mask)  = 0x0000001f0000001fULL;
 DECLARE_ASM_CONST(8, uint64_t, red_15mask)   = 0x00007c0000007c00ULL;
 DECLARE_ASM_CONST(8, uint64_t, green_15mask) = 0x000003e0000003e0ULL;
-DECLARE_ASM_CONST(8, uint64_t, blue_15mask)  = 0x0000001f0000001fULL;
+#define blue_15mask blue_16mask
 DECLARE_ASM_CONST(8, uint64_t, mul15_mid)    = 0x4200420042004200ULL;
 DECLARE_ASM_CONST(8, uint64_t, mul15_hi)     = 0x0210021002100210ULL;
 DECLARE_ASM_CONST(8, uint64_t, mul16_mid)    = 0x2080208020802080ULL;
@@ -2383,6 +2383,9 @@ void ff_uyvytoyuv422_avx(uint8_t *ydst, uint8_t *udst, uint8_t *vdst,
 void ff_uyvytoyuv422_avx2(uint8_t *ydst, uint8_t *udst, uint8_t *vdst,
                           const uint8_t *src, int width, int height,
                           int lumStride, int chromStride, int srcStride);
+void ff_uyvytoyuv422_avx512icl(uint8_t *ydst, uint8_t *udst, uint8_t *vdst,
+                               const uint8_t *src, int width, int height,
+                               int lumStride, int chromStride, int srcStride);
 #endif
 
 #define DEINTERLEAVE_BYTES(cpuext)                                            \
@@ -2477,6 +2480,9 @@ av_cold void rgb2rgb_init_x86(void)
     }
     if (EXTERNAL_AVX2_FAST(cpu_flags)) {
         uyvytoyuv422 = ff_uyvytoyuv422_avx2;
+    }
+    if (EXTERNAL_AVX512ICL(cpu_flags)) {
+        uyvytoyuv422 = ff_uyvytoyuv422_avx512icl;
 #endif
     }
 #endif
