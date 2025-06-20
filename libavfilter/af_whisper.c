@@ -45,7 +45,7 @@ typedef struct WhisperContext {
     int gpu_device;
 
     int step;
-    char *filename;
+    char *destination;
     char *format;
 
     struct whisper_context *ctx_wsp;
@@ -97,18 +97,18 @@ static int init(AVFilterContext *ctx) {
     wctx->next_pts = AV_NOPTS_VALUE;
 
     wctx->avio_context = NULL;
-    if (wctx->filename && strcmp("", wctx->filename)) {
+    if (wctx->destination && strcmp("", wctx->destination)) {
         int ret = 0;
 
-        if (!strcmp("-", wctx->filename)) {
+        if (!strcmp("-", wctx->destination)) {
             ret = avio_open(&wctx->avio_context, "pipe:1", AVIO_FLAG_WRITE);
         } else {
-            ret = avio_open(&wctx->avio_context, wctx->filename, AVIO_FLAG_WRITE);
+            ret = avio_open(&wctx->avio_context, wctx->destination, AVIO_FLAG_WRITE);
         }
 
         if (ret < 0) {
             av_log(ctx, AV_LOG_ERROR, "Could not open %s: %s\n",
-                wctx->filename, av_err2str(ret));
+                wctx->destination, av_err2str(ret));
             return ret;
         }
 
@@ -326,7 +326,7 @@ static const AVOption whisper_options[] = {
     { "step",  "Audio step size in milliseconds", OFFSET(step), AV_OPT_TYPE_INT, { .i64 = 3000 }, 0, INT_MAX, .flags = FLAGS },
     { "use_gpu", "Use GPU for processing", OFFSET(use_gpu), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, .flags = FLAGS },
     { "gpu_device", "GPU device to use", OFFSET(gpu_device), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, .flags = FLAGS },
-    { "filename",  "Output filename", OFFSET(filename), AV_OPT_TYPE_STRING, { .str = "" }, .flags = FLAGS },
+    { "destination",  "Output destination", OFFSET(destination), AV_OPT_TYPE_STRING, { .str = "" }, .flags = FLAGS },
     { "format",  "Output format (text|srt|json)", OFFSET(format), AV_OPT_TYPE_STRING, { .str = "text" }, .flags = FLAGS },
     { NULL }
 };
