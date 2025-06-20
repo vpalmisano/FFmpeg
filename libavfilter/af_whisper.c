@@ -46,6 +46,7 @@ typedef struct WhisperContext {
 
     int step;
     char *filename;
+    char *format;
 
     struct whisper_context *ctx_wsp;
 
@@ -62,6 +63,8 @@ typedef struct WhisperContext {
     int64_t timestamp;
 } WhisperContext;
 
+static void cb_log_disable(enum ggml_log_level , const char * , void * ) { }
+
 static int init(AVFilterContext *ctx) {
     WhisperContext *wctx = ctx->priv;
 
@@ -69,6 +72,8 @@ static int init(AVFilterContext *ctx) {
         av_log(ctx, AV_LOG_ERROR, "No whisper model path specified. Use the 'model' option.\n");
         return AVERROR(EINVAL);
     }
+
+    whisper_log_set(cb_log_disable, NULL);
 
     struct whisper_context_params params = whisper_context_default_params();
     params.use_gpu = wctx->use_gpu;
@@ -166,29 +171,50 @@ static void run_transcription(AVFilterContext *ctx, AVDictionary **metadata) {
         const int64_t t0 = whisper_full_get_segment_t0(wctx->ctx_wsp, i) * 10;
         const int64_t t1 = whisper_full_get_segment_t1(wctx->ctx_wsp, i) * 10;
         const char *text = whisper_full_get_segment_text(wctx->ctx_wsp, i);
-        av_log(ctx, AV_LOG_INFO, "[%ld-%ld%s]: %s\n", wctx->timestamp + t0, wctx->timestamp + t1, turn ? " (turn)" : "", text);
+        char *text_cleaned = av_strireplace(text + 1, "[BLANK_AUDIO]", "");
+
+        if (av_strnlen(text_cleaned, 1) == 0) {
+            av_free(text_cleaned);
+            continue;
+        }
+        av_log(ctx, AV_LOG_INFO, "[%ld-%ld%s]: \"%s\"\n", wctx->timestamp + t0, wctx->timestamp + t1, turn ? " (turn)" : "", text_cleaned);
         
         if (segments_text) {
-            char *new_text = av_asprintf("%s%s", segments_text, text);
+            char *new_text = av_asprintf("%s%s", segments_text, text_cleaned);
             av_free(segments_text);
             segments_text = new_text;
         } else {
-            segments_text = av_strdup(text);
+            segments_text = av_strdup(text_cleaned);
         }
 
         if (wctx->avio_context) {
             const int64_t start_t = wctx->timestamp + t0;
             const int64_t end_t = wctx->timestamp + t1;
-            char *srt_buf = av_asprintf("%d\n%02ld:%02ld:%02ld.%03ld --> %02ld:%02ld:%02ld.%03ld\n%s\n\n",
-                wctx->index++,
-                start_t / 3600000, (start_t / 60000) % 60, (start_t / 1000) % 60, start_t % 1000,
-                end_t / 3600000, (end_t / 60000) % 60, (end_t / 1000) % 60, end_t % 1000,
-                text);
-            avio_write(wctx->avio_context, srt_buf, strlen(srt_buf));
-            av_free(srt_buf);
+            char *buf = NULL;
+
+            if (!av_strcasecmp(wctx->format, "srt")) {
+                buf = av_asprintf("%d\n%02ld:%02ld:%02ld.%03ld --> %02ld:%02ld:%02ld.%03ld\n%s\n\n",
+                    wctx->index,
+                    start_t / 3600000, (start_t / 60000) % 60, (start_t / 1000) % 60, start_t % 1000,
+                    end_t / 3600000, (end_t / 60000) % 60, (end_t / 1000) % 60, end_t % 1000,
+                    text_cleaned);
+            } else if (!av_strcasecmp(wctx->format, "json")) {
+                buf = av_asprintf("{\"start\":%ld,\"end\":%ld,\"text\":\"%s\",\"turn\":%s}\n",
+                    start_t, end_t, text_cleaned, turn ? "true" : "false");
+            } else {
+                buf = av_strdup(text_cleaned);
+            }
+            
+            if (buf) {
+                avio_write(wctx->avio_context, buf, strlen(buf));
+                av_free(buf);
+            }
         }
+
+        av_free(text_cleaned);
     }
 
+    wctx->index++;
     wctx->timestamp += (int64_t)(duration * 1000);
 
     if (metadata && segments_text) {
@@ -300,7 +326,8 @@ static const AVOption whisper_options[] = {
     { "step",  "Audio step size in milliseconds", OFFSET(step), AV_OPT_TYPE_INT, { .i64 = 3000 }, 0, INT_MAX, .flags = FLAGS },
     { "use_gpu", "Use GPU for processing", OFFSET(use_gpu), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, .flags = FLAGS },
     { "gpu_device", "GPU device to use", OFFSET(gpu_device), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, .flags = FLAGS },
-    { "filename",  "Filename for srt output", OFFSET(filename), AV_OPT_TYPE_STRING, { .str = "" }, .flags = FLAGS },
+    { "filename",  "Output filename", OFFSET(filename), AV_OPT_TYPE_STRING, { .str = "" }, .flags = FLAGS },
+    { "format",  "Output format (text|srt|json)", OFFSET(format), AV_OPT_TYPE_STRING, { .str = "text" }, .flags = FLAGS },
     { NULL }
 };
 
