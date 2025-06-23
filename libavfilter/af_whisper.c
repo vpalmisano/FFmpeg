@@ -54,9 +54,10 @@ typedef struct WhisperContext
     char *destination;
     char *format;
 
+    struct whisper_context *ctx_wsp;
+    struct whisper_state *whisper_state;
     struct whisper_vad_context *ctx_vad;
     struct whisper_vad_params vad_params;
-    struct whisper_context *ctx_wsp;
 
     float *audio_buffer;
     int audio_buffer_queue_size;
@@ -95,6 +96,15 @@ static int init(AVFilterContext *ctx)
     if (wctx->ctx_wsp == NULL)
     {
         av_log(ctx, AV_LOG_ERROR, "Failed to initialize whisper context from model: %s\n", wctx->model_path);
+        return AVERROR(EIO);
+    }
+
+    wctx->whisper_state = whisper_init_state(wctx->ctx_wsp);
+    if (wctx->whisper_state == NULL)
+    {
+        av_log(ctx, AV_LOG_ERROR, "Failed to get whisper state from context\n");
+        whisper_free(wctx->ctx_wsp);
+        wctx->ctx_wsp = NULL;
         return AVERROR(EIO);
     }
 
@@ -177,11 +187,18 @@ static void uninit(AVFilterContext *ctx)
         wctx->ctx_vad = NULL;
     }
 
+    if (wctx->whisper_state)
+    {
+        whisper_free_state(wctx->whisper_state);
+        wctx->whisper_state = NULL;
+    }
+
     if (wctx->ctx_wsp)
     {
         whisper_free(wctx->ctx_wsp);
         wctx->ctx_wsp = NULL;
     }
+
     av_freep(&wctx->audio_buffer);
 
     if (wctx->avio_context)
@@ -224,7 +241,7 @@ static void run_transcription(AVFilterContext *ctx, AVDictionary **metadata, int
         return;
     }
 
-    const int n_segments = whisper_full_n_segments(wctx->ctx_wsp);
+    const int n_segments = whisper_full_n_segments_from_state(wctx->whisper_state);
     char *segments_text = NULL;
 
     for (int i = 0; i < n_segments; ++i)
