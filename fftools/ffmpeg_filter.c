@@ -2669,25 +2669,6 @@ static int read_frames(FilterGraph *fg, FilterGraphThread *fgt,
     while (fgp->nb_outputs_done < fg->nb_outputs) {
         int ret;
 
-        ret = avfilter_graph_request_oldest(fgt->graph);
-        if (ret == AVERROR(EAGAIN)) {
-            fgt->next_in = choose_input(fg, fgt);
-            break;
-        } else if (ret < 0) {
-            if (ret == AVERROR_EOF)
-                av_log(fg, AV_LOG_VERBOSE, "Filtergraph returned EOF, finishing\n");
-            else
-                av_log(fg, AV_LOG_ERROR,
-                       "Error requesting a frame from the filtergraph: %s\n",
-                       av_err2str(ret));
-            return ret;
-        }
-        fgt->next_in = fg->nb_inputs;
-
-        // return after one iteration, so that scheduler can rate-control us
-        if (did_step && fgp->have_sources)
-            return 0;
-
         /* Reap all buffers present in the buffer sinks */
         for (int i = 0; i < fg->nb_outputs; i++) {
             OutputFilterPriv *ofp = ofp_from_ofilter(fg->outputs[i]);
@@ -2699,10 +2680,30 @@ static int read_frames(FilterGraph *fg, FilterGraphThread *fgt,
                     return ret;
             }
         }
+
+        // return after one iteration, so that scheduler can rate-control us
+        if (did_step && fgp->have_sources)
+            return 0;
+
+        ret = avfilter_graph_request_oldest(fgt->graph);
+        if (ret == AVERROR(EAGAIN)) {
+            fgt->next_in = choose_input(fg, fgt);
+            return 0;
+        } else if (ret < 0) {
+            if (ret == AVERROR_EOF)
+                av_log(fg, AV_LOG_VERBOSE, "Filtergraph returned EOF, finishing\n");
+            else
+                av_log(fg, AV_LOG_ERROR,
+                       "Error requesting a frame from the filtergraph: %s\n",
+                       av_err2str(ret));
+            return ret;
+        }
+        fgt->next_in = fg->nb_inputs;
+
         did_step = 1;
     }
 
-    return (fgp->nb_outputs_done == fg->nb_outputs) ? AVERROR_EOF : 0;
+    return AVERROR_EOF;
 }
 
 static void sub2video_heartbeat(InputFilter *ifilter, int64_t pts, AVRational tb)

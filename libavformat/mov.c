@@ -484,7 +484,7 @@ retry:
                 return ret;
             }
         } else return 0;
-    } else if (atom.size > 4 && key && !c->itunes_metadata && !raw) {
+    } else if (atom.size > 4 && (key || c->export_all) && !c->itunes_metadata && !raw) {
         str_size = avio_rb16(pb); // string length
         if (str_size > atom.size) {
             raw = 1;
@@ -1274,6 +1274,11 @@ static int mov_read_clap(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     if (aperture_width.num  < 0 || aperture_width.den  < 0 ||
         aperture_height.num < 0 || aperture_height.den < 0 ||
         horiz_off.den       < 0 || vert_off.den        < 0) {
+        err = AVERROR_INVALIDDATA;
+        goto fail;
+    }
+    if ((av_cmp_q((AVRational) { width,  1 }, aperture_width)  < 0) ||
+        (av_cmp_q((AVRational) { height, 1 }, aperture_height) < 0)) {
         err = AVERROR_INVALIDDATA;
         goto fail;
     }
@@ -2982,6 +2987,7 @@ static int mov_finalize_stsd_codec(MOVContext *c, AVIOContext *pb,
     case AV_CODEC_ID_VP9:
         sti->need_parsing = AVSTREAM_PARSE_FULL;
         break;
+    case AV_CODEC_ID_APV:
     case AV_CODEC_ID_EVC:
     case AV_CODEC_ID_AV1:
         /* field_order detection of H264 requires parsing */
@@ -5430,18 +5436,18 @@ static int heif_add_stream(MOVContext *c, HEIFItem *item)
     sc->stsc_data[0].first = 1;
     sc->stsc_data[0].count = 1;
     sc->stsc_data[0].id = 1;
-    sc->chunk_count = 1;
     sc->chunk_offsets = av_malloc_array(1, sizeof(*sc->chunk_offsets));
     if (!sc->chunk_offsets)
         return AVERROR(ENOMEM);
-    sc->sample_count = 1;
+    sc->chunk_count = 1;
     sc->sample_sizes = av_malloc_array(1, sizeof(*sc->sample_sizes));
     if (!sc->sample_sizes)
         return AVERROR(ENOMEM);
-    sc->stts_count = 1;
+    sc->sample_count = 1;
     sc->stts_data = av_malloc_array(1, sizeof(*sc->stts_data));
     if (!sc->stts_data)
         return AVERROR(ENOMEM);
+    sc->stts_count = 1;
     sc->stts_data[0].count = 1;
     // Not used for still images. But needed by mov_build_index.
     sc->stts_data[0].duration = 0;
@@ -9320,6 +9326,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('a','m','v','e'), mov_read_amve }, /* ambient viewing environment box */
 { MKTAG('l','h','v','C'), mov_read_lhvc },
 { MKTAG('l','v','c','C'), mov_read_glbl },
+{ MKTAG('a','p','v','C'), mov_read_glbl },
 #if CONFIG_IAMFDEC
 { MKTAG('i','a','c','b'), mov_read_iacb },
 #endif
@@ -10336,7 +10343,7 @@ static int mov_parse_heif_items(AVFormatContext *s)
         st->codecpar->height = item->height;
 
         err = sanity_checks(s, sc, item->item_id);
-        if (err)
+        if (err || !sc->sample_count)
             return AVERROR_INVALIDDATA;
 
         sc->sample_sizes[0]  = item->extent_length;
@@ -11027,7 +11034,10 @@ static int mov_read_packet(AVFormatContext *s, AVPacket *pkt)
                 return FFERROR_REDO;
         }
 #endif
-        else
+        else if (st->codecpar->codec_id == AV_CODEC_ID_APV && sample->size > 4) {
+            const uint32_t au_size = avio_rb32(sc->pb);
+            ret = av_get_packet(sc->pb, pkt, au_size);
+        } else
             ret = av_get_packet(sc->pb, pkt, sample->size);
         if (ret < 0) {
             if (should_retry(sc->pb, ret)) {
