@@ -72,7 +72,7 @@ typedef struct WhisperContext {
 
 static void cb_log(enum ggml_log_level level, const char *text, void *user_data)
 {
-    AVFilterContext *ctx = (AVFilterContext *) user_data;
+    AVFilterContext *ctx = user_data;
     int av_log_level = AV_LOG_DEBUG;
     switch (level) {
     case GGML_LOG_LEVEL_ERROR:
@@ -111,7 +111,7 @@ static int init(AVFilterContext *ctx)
     }
 
     // Init buffer
-    wctx->audio_buffer_queue_size = WHISPER_SAMPLE_RATE * wctx->queue / 1000000;
+    wctx->audio_buffer_queue_size = av_rescale(wctx->queue, WHISPER_SAMPLE_RATE, AV_TIME_BASE);
     wctx->audio_buffer = av_malloc_array(wctx->audio_buffer_queue_size, sizeof(*wctx->audio_buffer));
     if (!wctx->audio_buffer)
         return AVERROR(ENOMEM);
@@ -126,9 +126,9 @@ static int init(AVFilterContext *ctx)
 
         wctx->vad_params = whisper_vad_default_params();
         wctx->vad_params.threshold = wctx->vad_threshold;
-        wctx->vad_params.min_speech_duration_ms = wctx->vad_min_speech_duration / 1000;
-        wctx->vad_params.min_silence_duration_ms = wctx->vad_min_silence_duration / 1000;
-        wctx->vad_params.max_speech_duration_s = wctx->queue / 1000000.0;
+        wctx->vad_params.min_speech_duration_ms = av_rescale(wctx->vad_min_speech_duration, 1000, AV_TIME_BASE);
+        wctx->vad_params.min_silence_duration_ms = av_rescale(wctx->vad_min_silence_duration, 1000, AV_TIME_BASE);
+        wctx->vad_params.max_speech_duration_s = av_rescale(wctx->queue, 1, AV_TIME_BASE);
         wctx->vad_params.speech_pad_ms = 0;
         wctx->vad_params.samples_overlap = 0;
     }
@@ -304,7 +304,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
 
     if (wctx->ctx_vad
         && (wctx->audio_buffer_fill_size - wctx->audio_buffer_vad_size) >=
-        WHISPER_SAMPLE_RATE * (wctx->vad_min_speech_duration + wctx->vad_min_silence_duration) / 1000000) {
+        av_rescale(wctx->vad_min_speech_duration + wctx->vad_min_silence_duration, WHISPER_SAMPLE_RATE, AV_TIME_BASE)) {
         struct whisper_vad_segments *segments = whisper_vad_segments_from_samples(wctx->ctx_vad,
                                                                                   wctx->vad_params,
                                                                                   wctx->audio_buffer,
@@ -321,7 +321,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
                 const float end_ms = whisper_vad_segments_get_segment_t1(segments, n_segments - 1) * 10.0;
                 int end_pos = (int) (end_ms * WHISPER_SAMPLE_RATE / 1000);
 
-                if (end_pos <= wctx->audio_buffer_fill_size - WHISPER_SAMPLE_RATE * wctx->vad_min_silence_duration / 1000000) {
+                if (end_pos <= wctx->audio_buffer_fill_size -
+                    av_rescale(wctx->vad_min_silence_duration, WHISPER_SAMPLE_RATE, AV_TIME_BASE)) {
                     av_log(ctx, AV_LOG_INFO,
                             "VAD detected %d segments, start: %.0f ms, end: %.0f ms (buffer: %d ms)\n",
                             n_segments, start_ms, end_ms, 1000 * wctx->audio_buffer_fill_size / WHISPER_SAMPLE_RATE);
@@ -408,7 +409,7 @@ static int query_formats(const AVFilterContext *ctx,
 {
     static const enum AVSampleFormat sample_fmts[] = { AV_SAMPLE_FMT_FLT, AV_SAMPLE_FMT_NONE };
     AVChannelLayout chlayouts[] = { FF_COUNT2LAYOUT(1), { 0 } };
-    int sample_rates[] = { 16000, -1 };
+    int sample_rates[] = { WHISPER_SAMPLE_RATE, -1 };
     int ret;
 
     ret = ff_set_common_formats_from_list2(ctx, cfg_in, cfg_out, sample_fmts);

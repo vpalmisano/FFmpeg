@@ -336,9 +336,9 @@ External library support:
   --disable-securetransport disable Secure Transport, needed for TLS support
                            on OSX if openssl and gnutls are not used [autodetect]
   --enable-vapoursynth     enable VapourSynth demuxer [no]
+  --enable-whisper         enable whisper filter [no]
   --disable-xlib           disable xlib [autodetect]
   --disable-zlib           disable zlib [autodetect]
-  --enable-whisper         enable whisper filter [no]
 
   The following libraries provide various hardware acceleration features:
   --disable-amf            disable AMF video encoding code [autodetect]
